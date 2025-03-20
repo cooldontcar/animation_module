@@ -1,15 +1,1 @@
-return function(part)
-	if part:IsA("BasePart") then
-		if part.CFrame ~= nil then
-			return part.CFrame
-		end
-	end
-	
-	if part:IsA("JointInstance") then
-		if part.C0 ~= nil then
-			return part.C0
-		end
-	end
-	
-	return CFrame.new(0,0,0)
-end
+
