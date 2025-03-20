@@ -1,0 +1,247 @@
+--@ animation_module.lua
+--# module to work with CFrame animations
+local animation_module = {}
+animation_module.__index = animation_module
+local animation_sets = {}
+
+-- - services
+local get_transformation = require(script.get_transformation)
+local tween_module = require(script.tween_module)
+
+-- - functions
+function get_animation_set_from_name(name)
+	for k, v in animation_sets do
+		if name == k then
+			return v
+		else
+			return false
+		end
+	end
+end
+
+-- - methods
+function animation_module.create_set(name)
+	if not name then 
+		error("animation set must have a name") 
+	end
+
+	local new_animation_set = setmetatable({}, animation_module)
+	new_animation_set.animation_objects = {}
+	new_animation_set.animations = {}
+
+	animation_sets[name] = new_animation_set
+
+	return new_animation_set
+end
+
+function animation_module.animate_from_set(self, animation_name, bypass_wait, ...)
+	local total_frames_in_set = 0
+	local on_frame = 0
+	
+	local function is_same(object_one,object_two)
+		return tostring(object_one) == tostring(object_two)
+	end
+	
+	local function animate(self, frame_number, ...)
+		local args = {...}
+		self.animations[animation_name].animation_in_progress = true
+
+		local animation_data = self.animations[animation_name].animation_function(...)
+		local animation_waits = animation_data.waits[frame_number] or 0
+		local animations_functions = animation_data.functions[frame_number] or {}
+		local animation_frames = animation_data.animations[frame_number] or {}
+		local animation_objects = self.animation_objects
+		
+		local animations_in_frame = 0
+		local on_animation = 0
+		
+		local animations_completed = 0
+		
+		total_frames_in_set = #animation_data.animations
+		on_frame += 1
+		
+		for k,v in next,animation_frames do
+			animations_in_frame += 1
+		end
+		
+		if #animations_functions ~= 0 then
+			if animations_functions[1] == "before" then
+				task.spawn(function()
+					animations_functions[2](unpack(args))
+				end)
+			end
+		end
+		
+		local new_thread = coroutine.create(function(...)
+			task.wait(animation_waits)
+
+			for k,v in next,animation_frames do
+				on_animation += 1
+				if is_same(k,animation_objects[k].object_name) then
+					local is_in_bypass = true
+					
+					if animation_objects[k].object_locked then
+						is_in_bypass = false
+					end
+
+					for k, v in next,animation_objects[k].sets_with_bypass do
+						if v == animation_name then
+							is_in_bypass = true
+						end
+					end
+
+					local object = animation_objects[k]
+					
+					for k1,v1 in next,v[1] do
+						pcall(function()
+							if v[1]["CFrame"] then
+								v[1].CFrame = object.original_cframe*v[1].CFrame
+							elseif v[1]["C0"] then
+								v[1].C0 = object.original_cframe*v[1].C0
+							end
+						end)
+					end
+					local bind = nil
+					
+					if is_in_bypass == false then
+						bind = tween_module.new(object.object,TweenInfo.new(0,v[3],v[2]),{},true,...)
+					else
+						bind = tween_module.new(object.object,TweenInfo.new(v[4],v[3],v[2]),v[1],true,...)
+					end
+					
+					bind.Event:Connect(function()
+						animations_completed += 1
+
+						if animations_completed == animations_in_frame then
+							if #animations_functions ~= 0 then
+								if animations_functions[1] == "after" then
+									task.spawn(function()
+										animations_functions[2](unpack(args))
+									end)
+								end
+							end
+							if on_frame == total_frames_in_set then
+								self.animations[animation_name].animation_in_progress = false
+							else
+								animate(self,frame_number+1,unpack(args))
+							end
+						end
+					end)
+				end
+			end
+		end)
+		
+		coroutine.resume(new_thread,...)
+	end
+
+	if getmetatable(self) == animation_module then
+		if not self.animations[animation_name].animation_in_progress or bypass_wait then
+			animate(self,1,...)
+		else
+			--warn("Animation in progress")
+		end
+	else
+		local animation_set = get_animation_set_from_name(self)
+		if animation_set then
+			if not animation_set.animations[animation_name].animation_in_progress or bypass_wait then
+				animate(animation_set,1,...)
+			end
+		else
+			error("animation set does not exist")
+		end
+	end
+end
+
+function animation_module.lock_object(self, object_name, is_locked, sets_bypass)
+	local function lock(self)
+		local objects = self.animation_objects
+		
+		for k, v in objects do
+			if k == object_name then
+				v.object_locked = is_locked
+				v.sets_with_bypass = sets_bypass or {}
+			end
+		end
+	end
+	
+	if getmetatable(self) == animation_module then
+		lock(self)
+	else
+		local animation_set = get_animation_set_from_name(self)
+		if animation_set then
+			lock(animation_set)
+		else
+			error("animation set does not exist")
+		end
+	end
+end
+
+function animation_module.add_animations(self, animations)
+	local function add(self)
+		for k, v in next,animations do
+			self.animations[k] = {animation_function = v, animation_in_progress = false}
+		end
+	end
+
+	if getmetatable(self) == animation_module then
+		add(self)
+	else
+		local animation_set = get_animation_set_from_name(self)
+		if animation_set then
+			add(animation_set)
+		else
+			error("animation set does not exist")
+		end
+	end
+end
+
+function animation_module.add_animation_object(self, animation_object)
+	local function add(self)
+		for k, v in next,animation_object do
+			self.animation_objects[k] = {object = v, object_name = k, original_cframe = get_transformation(v), object_locked = false, sets_with_bypass = {}}
+		end
+	end
+
+	if getmetatable(self) == animation_module then
+		add(self)
+	else
+		local animation_set = get_animation_set_from_name(self)
+		if animation_set then
+			add(animation_set)
+		else
+			error("animation set does not exist")
+		end
+	end
+end
+
+function animation_module.does_animation_set_exist(animation_name)
+	if get_animation_set_from_name(animation_name) then
+		return true
+	else
+		return false
+	end
+end
+
+function animation_module.does_animation_exist(self,animation_name)
+	local function does_exist(self)
+		for k,v in next,self.animations do
+			if k == animation_name then
+				return true
+			end
+		end
+		return false
+	end
+	
+	if getmetatable(self) == animation_module then
+		return does_exist(self)
+	else
+		local animation_set = get_animation_set_from_name(self)
+		if animation_set then
+			return does_exist(animation_set)
+		else
+			error("animation set does not exist")
+		end
+	end
+end
+
+return animation_module
