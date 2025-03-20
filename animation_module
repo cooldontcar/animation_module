@@ -4,7 +4,7 @@ local animation_module = {}
 animation_module.__index = animation_module
 local animation_sets = {}
 
--- - services
+-- - modules
 local get_transformation = require(script.get_transformation)
 local tween_module = require(script.tween_module)
 
